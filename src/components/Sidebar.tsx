@@ -33,7 +33,7 @@ export function Sidebar() {
       <nav className="flex-1 p-4 space-y-2">
         {navItems.map((item) => {
           const Icon = item.icon;
-          const isActive = pathname === item.href;
+          const isActive = item.href === '/research' ? pathname.startsWith('/research') : pathname === item.href;
           return (
             <Link
               key={item.href}
@@ -53,10 +53,13 @@ export function Sidebar() {
       </nav>
 
       <div className="p-4 border-t border-slate-800">
-        <button className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg transition-colors font-medium">
+        <Link
+          href="/research/upload"
+          className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg transition-colors font-medium"
+        >
           <Plus size={20} />
           New Capture
-        </button>
+        </Link>
       </div>
     </div>
   );

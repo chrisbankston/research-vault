@@ -37,6 +37,44 @@ export interface ResearchItem {
   updated_at: string;
 }
 
+export type KnowledgeSourceType = 'pdf' | 'docx' | 'markdown' | 'text' | 'plaud_transcript' | 'other';
+
+export type KnowledgeProcessingStatus = 'uploaded' | 'processing' | 'completed' | 'failed';
+
+export interface KnowledgeMetadata {
+  title: string;
+  summary: string;
+  keywords: string[];
+  topics: string[];
+  actionItems: string[];
+  peopleMentioned: string[];
+  datesMentioned: string[];
+}
+
+export interface KnowledgeCard {
+  id: string;
+  title: string;
+  summary: string;
+  keywords: string[];
+  topics: string[];
+  actionItems: string[];
+  peopleMentioned: string[];
+  datesMentioned: string[];
+  tags: string[];
+  suggestedWorkspace: string;
+  sourceType: KnowledgeSourceType;
+  processingStatus: KnowledgeProcessingStatus;
+  originalFilePath: string;
+  uploadDate: string;
+  relatedDocuments: string[];
+  extractedMetadata: KnowledgeMetadata;
+}
+
+export interface KnowledgeCardRecord extends KnowledgeCard {
+  extractedText: string;
+  fileName: string;
+}
+
 export interface Attachment {
   id: string;
   research_item_id: string;

@@ -76,6 +76,30 @@ CREATE TABLE IF NOT EXISTS messages (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Knowledge cards table
+CREATE TABLE IF NOT EXISTS knowledge_cards (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title VARCHAR(255) NOT NULL,
+  summary TEXT NOT NULL,
+  keywords TEXT[] NOT NULL DEFAULT '{}',
+  topics TEXT[] NOT NULL DEFAULT '{}',
+  action_items TEXT[] NOT NULL DEFAULT '{}',
+  people_mentioned TEXT[] NOT NULL DEFAULT '{}',
+  dates_mentioned TEXT[] NOT NULL DEFAULT '{}',
+  tags TEXT[] NOT NULL DEFAULT '{}',
+  suggested_workspace VARCHAR(255) NOT NULL,
+  source_type VARCHAR(50) NOT NULL,
+  processing_status VARCHAR(32) NOT NULL DEFAULT 'completed',
+  original_file_path TEXT NOT NULL,
+  upload_date TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  related_documents UUID[] NOT NULL DEFAULT '{}',
+  extracted_text TEXT NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  extracted_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_areas_user_id ON areas(user_id);
 CREATE INDEX IF NOT EXISTS idx_topics_area_id ON topics(area_id);
@@ -84,6 +108,14 @@ CREATE INDEX IF NOT EXISTS idx_attachments_research_id ON attachments(research_i
 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_source_type ON knowledge_cards(source_type);
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_processing_status ON knowledge_cards(processing_status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_upload_date ON knowledge_cards(upload_date DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_keywords_gin ON knowledge_cards USING GIN(keywords);
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_topics_gin ON knowledge_cards USING GIN(topics);
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_tags_gin ON knowledge_cards USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_people_gin ON knowledge_cards USING GIN(people_mentioned);
+CREATE INDEX IF NOT EXISTS idx_knowledge_cards_dates_gin ON knowledge_cards USING GIN(dates_mentioned);
 
 -- Create updated_at trigger function
 CREATE OR REPLACE FUNCTION update_timestamp()
@@ -114,4 +146,7 @@ CREATE TRIGGER update_conversations_timestamp BEFORE UPDATE ON conversations
 FOR EACH ROW EXECUTE FUNCTION update_timestamp();
 
 CREATE TRIGGER update_messages_timestamp BEFORE UPDATE ON messages
+FOR EACH ROW EXECUTE FUNCTION update_timestamp();
+
+CREATE TRIGGER update_knowledge_cards_timestamp BEFORE UPDATE ON knowledge_cards
 FOR EACH ROW EXECUTE FUNCTION update_timestamp();

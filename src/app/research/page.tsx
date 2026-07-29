@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import { SearchBar } from '@/components/SearchBar';
 import { ResearchCard } from '@/components/ResearchCard';
-import { UploadButton } from '@/components/UploadButton';
+import { DocumentUploadPanel } from '@/components/DocumentUploadPanel';
 import { Plus, Filter } from 'lucide-react';
-import { ResearchItem } from '@/types';
+import { KnowledgeCard, ResearchItem } from '@/types';
+import { useRouter } from 'next/navigation';
 
 // Mock data
 const mockResearch: ResearchItem[] = [
@@ -48,21 +50,96 @@ const mockResearch: ResearchItem[] = [
 ];
 
 export default function ResearchPage() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [research, setResearch] = useState(mockResearch);
+  const [knowledgeCards, setKnowledgeCards] = useState<KnowledgeCard[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const filteredResearch = research.filter(
-    (item) =>
-      item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.content.toLowerCase().includes(searchQuery.toLowerCase())
+  const upsertKnowledgeCard = (knowledgeCard: KnowledgeCard) => {
+    setKnowledgeCards((prev) => {
+      const remaining = prev.filter((item) => item.id !== knowledgeCard.id);
+      return [knowledgeCard, ...remaining];
+    });
+  };
+
+  useEffect(() => {
+    const loadKnowledgeCards = async () => {
+      try {
+        setLoadError(null);
+        const response = await fetch('/api/knowledge/cards', { cache: 'no-store' });
+        const payload = (await response.json()) as { data?: KnowledgeCard[]; error?: string };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? `Knowledge cards request failed (${response.status}).`);
+        }
+
+        setKnowledgeCards(payload.data ?? []);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to load knowledge cards.';
+        setLoadError(message);
+        console.error('Knowledge card load error:', message);
+      }
+    };
+
+    void loadKnowledgeCards();
+  }, []);
+
+  const libraryItems = useMemo(
+    () => [
+      ...knowledgeCards.map((card) => ({
+        id: card.id,
+        title: card.title,
+        summary: card.summary,
+        tags: card.tags,
+        sourceType: card.sourceType,
+        processingStatus: card.processingStatus,
+        uploadDate: card.uploadDate,
+        viewOriginalHref: `/api/knowledge/files/${card.id}`,
+        searchable: [
+          card.title,
+          card.summary,
+          card.suggestedWorkspace,
+          ...card.topics,
+          ...card.tags,
+          ...card.keywords,
+          ...card.peopleMentioned,
+          ...card.datesMentioned,
+        ]
+          .join(' ')
+          .toLowerCase(),
+      })),
+      ...research.map((item) => ({
+        id: item.id,
+        title: item.title,
+        content: item.content,
+        source_url: item.source_url,
+        sourceType: 'research_item',
+        uploadDate: item.created_at,
+        searchable: [item.title, item.content].join(' ').toLowerCase(),
+      })),
+    ],
+    [knowledgeCards, research]
+  );
+
+  const filteredResearch = libraryItems.filter((item) =>
+    item.searchable.includes(searchQuery.toLowerCase())
   );
 
   const handleDeleteResearch = (id: string) => {
-    setResearch(research.filter((item) => item.id !== id));
+    setResearch((prev) => prev.filter((item) => item.id !== id));
+    setKnowledgeCards((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const handleUpload = (file: File) => {
-    console.log('Uploaded file:', file.name);
+  const handleAskAI = (id: string) => {
+    const target = filteredResearch.find((item) => item.id === id);
+    if (!target) {
+      router.push('/chat');
+      return;
+    }
+
+    const prompt = `Help me understand this document: ${target.title}`;
+    router.push(`/chat?prompt=${encodeURIComponent(prompt)}`);
   };
 
   return (
@@ -73,10 +150,13 @@ export default function ResearchPage() {
           <h1 className="text-4xl font-bold text-white mb-2">Research Library</h1>
           <p className="text-slate-400">Explore and manage your knowledge base</p>
         </div>
-        <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-medium">
+        <Link
+          href="/research/upload"
+          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg transition-colors font-medium"
+        >
           <Plus size={20} />
           Add to Library
-        </button>
+        </Link>
       </div>
 
       {/* Search and Filter */}
@@ -92,8 +172,8 @@ export default function ResearchPage() {
 
       {/* Upload Section */}
       <div className="mb-8">
-        <h2 className="text-lg font-semibold text-white mb-4">Upload Research Document</h2>
-        <UploadButton onUpload={handleUpload} />
+        <DocumentUploadPanel onUploaded={upsertKnowledgeCard} />
+        {loadError && <p className="text-red-400 text-sm mt-2">{loadError}</p>}
       </div>
 
       {/* Research Items */}
@@ -104,7 +184,12 @@ export default function ResearchPage() {
 
         {filteredResearch.length > 0 ? (
           filteredResearch.map((item) => (
-            <ResearchCard key={item.id} research={item} onDelete={handleDeleteResearch} />
+            <ResearchCard
+              key={item.id}
+              research={item}
+              onDelete={handleDeleteResearch}
+              onAskAI={handleAskAI}
+            />
           ))
         ) : (
           <div className="text-center py-12 bg-slate-800 border border-slate-700 rounded-lg">
