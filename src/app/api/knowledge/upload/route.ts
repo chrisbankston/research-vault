@@ -20,6 +20,37 @@ interface ExistingKnowledgeCardRow {
   tags: string[];
 }
 
+const ensureResearchFilesBucket = async (supabase: ReturnType<typeof getSupabaseServerClient>) => {
+  const { data: existingBucket, error: bucketLookupError } = await supabase.storage.getBucket(
+    RESEARCH_FILE_BUCKET
+  );
+
+  if (existingBucket) {
+    return;
+  }
+
+  if (bucketLookupError && bucketLookupError.message.toLowerCase() !== 'bucket not found') {
+    throw new Error(`Unable to verify storage bucket: ${bucketLookupError.message}`);
+  }
+
+  const { error: createBucketError } = await supabase.storage.createBucket(RESEARCH_FILE_BUCKET, {
+    public: false,
+    fileSizeLimit: 52428800,
+    allowedMimeTypes: [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+      'text/markdown',
+      'text/x-markdown',
+    ],
+  });
+
+  if (createBucketError && !createBucketError.message.toLowerCase().includes('already exists')) {
+    throw new Error(`Unable to create storage bucket: ${createBucketError.message}`);
+  }
+};
+
 const toRow = (knowledgeCard: ReturnType<typeof buildPendingKnowledgeCardRecord>) => ({
   id: knowledgeCard.id,
   title: knowledgeCard.title,
@@ -58,6 +89,7 @@ export async function POST(request: Request) {
     }
 
     const supabase = getSupabaseServerClient();
+    await ensureResearchFilesBucket(supabase);
 
     const { data: existingRows, error: fetchError } = await supabase
       .from('knowledge_cards')
