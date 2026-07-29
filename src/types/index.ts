@@ -37,7 +37,14 @@ export interface ResearchItem {
   updated_at: string;
 }
 
-export type KnowledgeSourceType = 'pdf' | 'docx' | 'markdown' | 'text' | 'plaud_transcript' | 'other';
+export type KnowledgeSourceType =
+  | 'pdf'
+  | 'docx'
+  | 'markdown'
+  | 'text'
+  | 'plaud_transcript'
+  | 'web_research'
+  | 'other';
 
 export type KnowledgeProcessingStatus = 'uploaded' | 'processing' | 'completed' | 'failed';
 

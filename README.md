@@ -7,7 +7,9 @@ AI Research Vault is a production-quality knowledge management application built
 - **Dashboard**: Overview of research areas, recent items, and AI chat panel
 - **Areas**: Organize research into distinct areas of focus
 - **Research**: Manage and search research items with document upload
-- **AI Chat**: Ask questions about your research with AI assistance
+- **Ask AI Modes**:
+   - **Ask My Vault**: Answers only from uploaded vault evidence with citations and explicit refusal when evidence is missing
+   - **Research Anything**: Searches the public web, synthesizes a cited report, and saves the report back into Research Vault as a searchable Knowledge Card
 - **Settings**: Customize preferences and account settings
 - **Dark Theme**: Modern, clean UI with dark theme optimized for reading
 - **Responsive Design**: Fully responsive on desktop, tablet, and mobile
@@ -93,6 +95,12 @@ src/
    - `GITHUB_MODELS_CHAT_MODEL` (optional, default `gpt-4.1-mini`)
    - `GITHUB_MODELS_EMBEDDING_MODEL` (optional, default `text-embedding-3-small`)
 
+   Research Anything web provider variables:
+   - `WEB_SEARCH_PROVIDER` (optional, `duckduckgo` or `tavily`, default `duckduckgo`)
+   - `WEB_SOURCE_FETCH_TIMEOUT_MS` (optional, per-source timeout, default `10000`)
+   - `WEB_RESEARCH_TIMEOUT_MS` (optional, total pipeline timeout, default `120000`)
+   - `TAVILY_API_KEY` (required only when `WEB_SEARCH_PROVIDER=tavily`)
+
 4. Run the development server:
    ```bash
    npm run dev
@@ -127,6 +135,28 @@ Run the SQL schema from `src/database/schema.sql` in your Supabase dashboard to 
 - **ResearchCard**: Card component for displaying research items
 - **ChatPanel**: Chat interface with message history
 - **UploadButton**: Drag-and-drop file upload component
+
+## Research Anything Flow
+
+1. User selects **Research Anything** in chat.
+2. The app searches the web using a configurable provider.
+3. It retrieves and deduplicates relevant sources.
+4. It extracts source content and synthesizes a structured report.
+5. The report includes:
+   - Sourced facts
+   - AI conclusions
+   - Source title, URL, publisher, and access date
+6. The completed report is saved as a `knowledge_cards` row with `source_type=web_research`.
+7. Ask My Vault can immediately retrieve this report as grounded evidence.
+
+Progress states shown in UI/API:
+- `searching`
+- `reading_sources`
+- `analyzing`
+- `writing_report`
+- `saving_to_vault`
+- `complete`
+- `failed`
 
 ## Pages
 

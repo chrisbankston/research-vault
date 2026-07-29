@@ -1,18 +1,9 @@
 import { getSupabaseServerClient } from '@/lib/supabaseServer';
+import { getAiProviderConfig } from '@/lib/aiProvider';
 
 interface ChatHistoryItem {
   role: 'user' | 'assistant';
   content: string;
-}
-
-type AiProvider = 'openai' | 'github-models';
-
-interface AiProviderConfig {
-  provider: AiProvider;
-  apiKey: string;
-  baseUrl: string;
-  chatModel: string;
-  embeddingModel: string;
 }
 
 interface KnowledgeCardRow {
@@ -57,68 +48,6 @@ const MAX_CONTEXT_TEXT = 2500;
 const MAX_HISTORY = 8;
 const MAX_CANDIDATES = 30;
 const MAX_SOURCES = 5;
-
-const getProviderConfig = (): AiProviderConfig | null => {
-  const explicitProvider = process.env.AI_PROVIDER?.trim().toLowerCase();
-
-  if (explicitProvider === 'github-models') {
-    const apiKey = process.env.GITHUB_TOKEN?.trim();
-    if (!apiKey) {
-      return null;
-    }
-
-    return {
-      provider: 'github-models',
-      apiKey,
-      baseUrl:
-        process.env.GITHUB_MODELS_BASE_URL?.trim() || 'https://models.inference.ai.azure.com',
-      chatModel: process.env.GITHUB_MODELS_CHAT_MODEL?.trim() || 'gpt-4.1-mini',
-      embeddingModel:
-        process.env.GITHUB_MODELS_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small',
-    };
-  }
-
-  if (explicitProvider === 'openai') {
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
-    if (!apiKey) {
-      return null;
-    }
-
-    return {
-      provider: 'openai',
-      apiKey,
-      baseUrl: process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1',
-      chatModel: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
-      embeddingModel: process.env.OPENAI_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small',
-    };
-  }
-
-  const openAiKey = process.env.OPENAI_API_KEY?.trim();
-  if (openAiKey) {
-    return {
-      provider: 'openai',
-      apiKey: openAiKey,
-      baseUrl: process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1',
-      chatModel: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
-      embeddingModel: process.env.OPENAI_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small',
-    };
-  }
-
-  const githubToken = process.env.GITHUB_TOKEN?.trim();
-  if (githubToken) {
-    return {
-      provider: 'github-models',
-      apiKey: githubToken,
-      baseUrl:
-        process.env.GITHUB_MODELS_BASE_URL?.trim() || 'https://models.inference.ai.azure.com',
-      chatModel: process.env.GITHUB_MODELS_CHAT_MODEL?.trim() || 'gpt-4.1-mini',
-      embeddingModel:
-        process.env.GITHUB_MODELS_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small',
-    };
-  }
-
-  return null;
-};
 
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he', 'in', 'is',
@@ -206,7 +135,7 @@ const toSource = (card: KnowledgeCardRow): AskAiSource => ({
 });
 
 const fetchEmbeddings = async (inputs: string[]): Promise<number[][] | null> => {
-  const config = getProviderConfig();
+  const config = getAiProviderConfig();
   if (!config || inputs.length === 0) {
     return null;
   }
@@ -332,7 +261,7 @@ const askGroundedModel = async (
   history: ChatHistoryItem[],
   sources: AskAiSource[]
 ): Promise<{ answer: string; citationIds: string[]; notFoundInVault: boolean } | null> => {
-  const config = getProviderConfig();
+  const config = getAiProviderConfig();
   if (!config) {
     return null;
   }

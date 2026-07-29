@@ -4,6 +4,16 @@ import { useEffect, useRef, useState } from 'react';
 import { ChatPanel } from '@/components/ChatPanel';
 import { Plus, MessageSquare, Trash2 } from 'lucide-react';
 
+type ChatMode = 'ask_my_vault' | 'research_anything';
+
+const RESEARCH_PROGRESS_SEQUENCE = [
+  'Searching',
+  'Reading sources',
+  'Analyzing',
+  'Writing report',
+  'Saving to vault',
+] as const;
+
 interface Conversation {
   id: string;
   title: string;
@@ -15,6 +25,7 @@ interface Message {
   content: string;
   role: 'user' | 'assistant';
   createdAt: Date;
+  mode?: ChatMode;
   sources?: MessageSource[];
   webSearchSuggestion?: string | null;
   notFoundInVault?: boolean;
@@ -23,21 +34,31 @@ interface Message {
 interface MessageSource {
   id: string;
   title: string;
-  summary: string;
-  keywords: string[];
-  topics: string[];
-  sourceType: string;
-  uploadDate: string;
-  fileName: string;
-  extractedMetadata: Record<string, unknown>;
+  summary?: string;
+  url?: string;
+  publisher?: string;
+  accessDate?: string;
+  snippet?: string;
+  keywords?: string[];
+  topics?: string[];
+  sourceType?: string;
+  uploadDate?: string;
+  fileName?: string;
+  extractedMetadata?: Record<string, unknown>;
 }
 
 interface AskApiResponse {
   data?: {
+    mode?: ChatMode;
     answer: string;
     sources: MessageSource[];
     notFoundInVault: boolean;
     webSearchSuggestion: string | null;
+    progress?: string[];
+    qualityAssessment?: string;
+    question?: string;
+    knowledgeCardId?: string;
+    duplicateOfExisting?: boolean;
   };
   error?: string;
 }
@@ -45,38 +66,21 @@ interface AskApiResponse {
 export default function ChatPage() {
   const [hydratedPrompt, setHydratedPrompt] = useState<string | null>(null);
   const handledPrompts = useRef<Set<string>>(new Set());
+  const pendingRequests = useRef<Set<string>>(new Set());
+  const [activeMode, setActiveMode] = useState<ChatMode>('ask_my_vault');
+  const [researchProgressLabel, setResearchProgressLabel] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([
     {
       id: '1',
-      title: 'Deck Materials Comparison',
-      createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-    },
-    {
-      id: '2',
-      title: 'Roof Installation Best Practices',
-      createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+      title: 'New Conversation',
+      createdAt: new Date(),
     },
   ]);
 
   const [currentConversationId, setCurrentConversationId] = useState<string | null>('1');
   const [isLoading, setIsLoading] = useState(false);
   const [conversationMessages, setConversationMessages] = useState<Record<string, Message[]>>({
-    '1': [
-      {
-        id: '1',
-        content: 'What are the pros and cons of composite decking materials?',
-        role: 'user',
-        createdAt: new Date(),
-      },
-      {
-        id: '2',
-        content:
-          'Composite decking offers excellent durability, low maintenance, and resistance to rot and insects. However, it tends to be more expensive upfront than wood and can soften in extreme heat. It is an ideal choice if you prioritize longevity and minimal upkeep.',
-        role: 'assistant',
-        createdAt: new Date(),
-      },
-    ],
-    '2': [],
+    '1': [],
   });
 
   const messages = currentConversationId ? (conversationMessages[currentConversationId] ?? []) : [];
@@ -84,9 +88,28 @@ export default function ChatPage() {
   const requestAssistantReply = async (
     question: string,
     conversationId: string,
-    history: Message[]
+    history: Message[],
+    mode: ChatMode
   ) => {
+    const requestKey = `${conversationId}:${mode}:${question.trim().toLowerCase()}`;
+    if (pendingRequests.current.has(requestKey)) {
+      return;
+    }
+
+    pendingRequests.current.add(requestKey);
     setIsLoading(true);
+
+    let progressTimer: ReturnType<typeof setInterval> | null = null;
+    if (mode === 'research_anything') {
+      let step = 0;
+      setResearchProgressLabel(RESEARCH_PROGRESS_SEQUENCE[0]);
+      progressTimer = setInterval(() => {
+        step = (step + 1) % RESEARCH_PROGRESS_SEQUENCE.length;
+        setResearchProgressLabel(RESEARCH_PROGRESS_SEQUENCE[step]);
+      }, 1600);
+    } else {
+      setResearchProgressLabel(null);
+    }
 
     try {
       const response = await fetch('/api/chat/ask', {
@@ -95,6 +118,7 @@ export default function ChatPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          mode,
           question,
           history: history.map((item) => ({ role: item.role, content: item.content })),
         }),
@@ -105,17 +129,23 @@ export default function ChatPage() {
         throw new Error(payload.error ?? 'Ask AI request failed.');
       }
 
-      const citedTitles = payload.data.sources.map((source) => source.title).join(', ');
-      const content =
-        payload.data.sources.length > 0
-          ? `${payload.data.answer}\n\nCited documents: ${citedTitles}`
-          : payload.data.answer;
+      const isResearchMode = payload.data.mode === 'research_anything' || mode === 'research_anything';
+      const qualityLine =
+        isResearchMode && payload.data.qualityAssessment
+          ? `\n\nResearch quality: ${payload.data.qualityAssessment}`
+          : '';
+      const duplicateLine =
+        isResearchMode && payload.data.duplicateOfExisting
+          ? '\n\nDuplicate submission prevented. Returned the most recent matching report from your vault.'
+          : '';
+      const content = `${payload.data.answer}${qualityLine}${duplicateLine}`;
 
       const assistantMessage: Message = {
         id: `assistant-${Date.now()}`,
         content,
         role: 'assistant',
         createdAt: new Date(),
+        mode,
         sources: payload.data.sources,
         webSearchSuggestion: payload.data.webSearchSuggestion,
         notFoundInVault: payload.data.notFoundInVault,
@@ -134,6 +164,7 @@ export default function ChatPage() {
             : 'Ask AI failed due to an unknown error.',
         role: 'assistant',
         createdAt: new Date(),
+        mode,
       };
 
       setConversationMessages((prev) => ({
@@ -141,6 +172,11 @@ export default function ChatPage() {
         [conversationId]: [...(prev[conversationId] ?? []), fallbackMessage],
       }));
     } finally {
+      if (progressTimer) {
+        clearInterval(progressTimer);
+      }
+      setResearchProgressLabel(null);
+      pendingRequests.current.delete(requestKey);
       setIsLoading(false);
     }
   };
@@ -194,7 +230,7 @@ export default function ChatPage() {
     });
 
     setCurrentConversationId(autoConversation.id);
-    void requestAssistantReply(prompt, promptConversationId, historyForPrompt);
+    void requestAssistantReply(prompt, promptConversationId, historyForPrompt, 'ask_my_vault');
   }, [hydratedPrompt]);
 
   const handleSendMessage = (message: string) => {
@@ -216,6 +252,7 @@ export default function ChatPage() {
       content: message,
       role: 'user',
       createdAt: new Date(),
+      mode: activeMode,
     };
 
     let requestHistory: Message[] = [];
@@ -230,7 +267,7 @@ export default function ChatPage() {
       };
     });
 
-    void requestAssistantReply(message, conversationId, requestHistory);
+    void requestAssistantReply(message, conversationId, requestHistory, activeMode);
   };
 
   const handleNewConversation = () => {
@@ -315,12 +352,16 @@ export default function ChatPage() {
               content: msg.content,
               role: msg.role,
               createdAt: msg.createdAt,
+              mode: msg.mode,
               sources: msg.sources,
               webSearchSuggestion: msg.webSearchSuggestion,
               notFoundInVault: msg.notFoundInVault,
             }))}
             onSendMessage={handleSendMessage}
             isLoading={isLoading}
+            mode={activeMode}
+            onModeChange={setActiveMode}
+            researchProgressLabel={researchProgressLabel}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
