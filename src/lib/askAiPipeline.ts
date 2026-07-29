@@ -5,6 +5,16 @@ interface ChatHistoryItem {
   content: string;
 }
 
+type AiProvider = 'openai' | 'github-models';
+
+interface AiProviderConfig {
+  provider: AiProvider;
+  apiKey: string;
+  baseUrl: string;
+  chatModel: string;
+  embeddingModel: string;
+}
+
 interface KnowledgeCardRow {
   id: string;
   title: string;
@@ -47,6 +57,68 @@ const MAX_CONTEXT_TEXT = 2500;
 const MAX_HISTORY = 8;
 const MAX_CANDIDATES = 30;
 const MAX_SOURCES = 5;
+
+const getProviderConfig = (): AiProviderConfig | null => {
+  const explicitProvider = process.env.AI_PROVIDER?.trim().toLowerCase();
+
+  if (explicitProvider === 'github-models') {
+    const apiKey = process.env.GITHUB_TOKEN?.trim();
+    if (!apiKey) {
+      return null;
+    }
+
+    return {
+      provider: 'github-models',
+      apiKey,
+      baseUrl:
+        process.env.GITHUB_MODELS_BASE_URL?.trim() || 'https://models.inference.ai.azure.com',
+      chatModel: process.env.GITHUB_MODELS_CHAT_MODEL?.trim() || 'gpt-4.1-mini',
+      embeddingModel:
+        process.env.GITHUB_MODELS_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small',
+    };
+  }
+
+  if (explicitProvider === 'openai') {
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    if (!apiKey) {
+      return null;
+    }
+
+    return {
+      provider: 'openai',
+      apiKey,
+      baseUrl: process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1',
+      chatModel: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
+      embeddingModel: process.env.OPENAI_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small',
+    };
+  }
+
+  const openAiKey = process.env.OPENAI_API_KEY?.trim();
+  if (openAiKey) {
+    return {
+      provider: 'openai',
+      apiKey: openAiKey,
+      baseUrl: process.env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com/v1',
+      chatModel: process.env.OPENAI_MODEL?.trim() || 'gpt-4o-mini',
+      embeddingModel: process.env.OPENAI_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small',
+    };
+  }
+
+  const githubToken = process.env.GITHUB_TOKEN?.trim();
+  if (githubToken) {
+    return {
+      provider: 'github-models',
+      apiKey: githubToken,
+      baseUrl:
+        process.env.GITHUB_MODELS_BASE_URL?.trim() || 'https://models.inference.ai.azure.com',
+      chatModel: process.env.GITHUB_MODELS_CHAT_MODEL?.trim() || 'gpt-4.1-mini',
+      embeddingModel:
+        process.env.GITHUB_MODELS_EMBEDDING_MODEL?.trim() || 'text-embedding-3-small',
+    };
+  }
+
+  return null;
+};
 
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he', 'in', 'is',
@@ -134,20 +206,19 @@ const toSource = (card: KnowledgeCardRow): AskAiSource => ({
 });
 
 const fetchEmbeddings = async (inputs: string[]): Promise<number[][] | null> => {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || inputs.length === 0) {
+  const config = getProviderConfig();
+  if (!config || inputs.length === 0) {
     return null;
   }
 
-  const model = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-small';
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
+  const response = await fetch(`${config.baseUrl}/embeddings`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model,
+      model: config.embeddingModel,
       input: inputs,
     }),
   });
@@ -261,12 +332,11 @@ const askGroundedModel = async (
   history: ChatHistoryItem[],
   sources: AskAiSource[]
 ): Promise<{ answer: string; citationIds: string[]; notFoundInVault: boolean } | null> => {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
+  const config = getProviderConfig();
+  if (!config) {
     return null;
   }
 
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
   const contextPayload = sources.map((source) => ({
     id: source.id,
     title: source.title,
@@ -281,14 +351,14 @@ const askGroundedModel = async (
   }));
 
   const cappedHistory = history.slice(-MAX_HISTORY);
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model,
+      model: config.chatModel,
       temperature: 0.1,
       response_format: { type: 'json_object' },
       messages: [

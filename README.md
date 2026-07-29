@@ -19,7 +19,7 @@ AI Research Vault is a production-quality knowledge management application built
 - **TypeScript**: Type-safe development
 - **Tailwind CSS**: Utility-first styling
 - **Supabase**: Backend and database
-- **OpenAI API**: AI-powered features
+- **OpenAI API / GitHub Models**: AI-powered features
 - **Lucide React**: Icon library
 
 ## Project Structure
@@ -70,7 +70,28 @@ src/
    ```bash
    cp .env.example .env.local
    ```
-   Update the values with your Supabase and OpenAI credentials.
+   Update the values with your Supabase credentials plus one AI provider:
+
+   Required:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+   Provider selection:
+   - `AI_PROVIDER=openai` to force OpenAI
+   - `AI_PROVIDER=github-models` to force GitHub Models
+   - if `AI_PROVIDER` is unset, the app auto-selects `openai` when `OPENAI_API_KEY` exists, otherwise `github-models` when `GITHUB_TOKEN` exists
+
+   OpenAI variables:
+   - `OPENAI_API_KEY` (required for OpenAI)
+   - `OPENAI_BASE_URL` (optional, default `https://api.openai.com/v1`)
+   - `OPENAI_MODEL` (optional, default `gpt-4o-mini`)
+   - `OPENAI_EMBEDDING_MODEL` (optional, default `text-embedding-3-small`)
+
+   GitHub Models variables:
+   - `GITHUB_TOKEN` (required for GitHub Models)
+   - `GITHUB_MODELS_BASE_URL` (optional, default `https://models.inference.ai.azure.com`)
+   - `GITHUB_MODELS_CHAT_MODEL` (optional, default `gpt-4.1-mini`)
+   - `GITHUB_MODELS_EMBEDDING_MODEL` (optional, default `text-embedding-3-small`)
 
 4. Run the development server:
    ```bash
