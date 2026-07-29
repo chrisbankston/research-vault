@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChatPanel } from '@/components/ChatPanel';
 import { Plus, MessageSquare, Trash2 } from 'lucide-react';
 
@@ -18,6 +18,8 @@ interface Message {
 }
 
 export default function ChatPage() {
+  const [hydratedPrompt, setHydratedPrompt] = useState<string | null>(null);
+  const handledPrompts = useRef<Set<string>>(new Set());
   const [conversations, setConversations] = useState<Conversation[]>([
     {
       id: '1',
@@ -46,6 +48,41 @@ export default function ChatPage() {
       createdAt: new Date(),
     },
   ]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const prompt = params.get('prompt');
+    if (!prompt || prompt === hydratedPrompt || handledPrompts.current.has(prompt)) {
+      return;
+    }
+    handledPrompts.current.add(prompt);
+    setHydratedPrompt(prompt);
+
+    const promptConversationId = `prompt-${encodeURIComponent(prompt).slice(0, 80)}`;
+
+    const prefixedMessage: Message = {
+      id: `message-${promptConversationId}`,
+      content: prompt,
+      role: 'user',
+      createdAt: new Date(),
+    };
+
+    const autoConversation: Conversation = {
+      id: promptConversationId,
+      title: 'Ask AI from Research Library',
+      createdAt: new Date(),
+    };
+
+    setConversations((prev) => {
+      if (prev.some((conversation) => conversation.id === promptConversationId)) {
+        return prev;
+      }
+
+      return [autoConversation, ...prev];
+    });
+    setCurrentConversationId(autoConversation.id);
+    setMessages([prefixedMessage]);
+  }, [hydratedPrompt]);
 
   const handleSendMessage = (message: string) => {
     // Add user message
