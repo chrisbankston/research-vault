@@ -15,6 +15,31 @@ interface Message {
   content: string;
   role: 'user' | 'assistant';
   createdAt: Date;
+  sources?: MessageSource[];
+  webSearchSuggestion?: string | null;
+  notFoundInVault?: boolean;
+}
+
+interface MessageSource {
+  id: string;
+  title: string;
+  summary: string;
+  keywords: string[];
+  topics: string[];
+  sourceType: string;
+  uploadDate: string;
+  fileName: string;
+  extractedMetadata: Record<string, unknown>;
+}
+
+interface AskApiResponse {
+  data?: {
+    answer: string;
+    sources: MessageSource[];
+    notFoundInVault: boolean;
+    webSearchSuggestion: string | null;
+  };
+  error?: string;
 }
 
 export default function ChatPage() {
@@ -33,21 +58,92 @@ export default function ChatPage() {
     },
   ]);
 
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      content: 'What are the pros and cons of composite decking materials?',
-      role: 'user',
-      createdAt: new Date(),
-    },
-    {
-      id: '2',
-      content: 'Composite decking offers excellent durability, low maintenance, and resistance to rot and insects. However, it tends to be more expensive upfront than wood and can soften in extreme heat. It&apos;s an ideal choice if you prioritize longevity and minimal upkeep.',
-      role: 'assistant',
-      createdAt: new Date(),
-    },
-  ]);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>('1');
+  const [isLoading, setIsLoading] = useState(false);
+  const [conversationMessages, setConversationMessages] = useState<Record<string, Message[]>>({
+    '1': [
+      {
+        id: '1',
+        content: 'What are the pros and cons of composite decking materials?',
+        role: 'user',
+        createdAt: new Date(),
+      },
+      {
+        id: '2',
+        content:
+          'Composite decking offers excellent durability, low maintenance, and resistance to rot and insects. However, it tends to be more expensive upfront than wood and can soften in extreme heat. It is an ideal choice if you prioritize longevity and minimal upkeep.',
+        role: 'assistant',
+        createdAt: new Date(),
+      },
+    ],
+    '2': [],
+  });
+
+  const messages = currentConversationId ? (conversationMessages[currentConversationId] ?? []) : [];
+
+  const requestAssistantReply = async (
+    question: string,
+    conversationId: string,
+    history: Message[]
+  ) => {
+    setIsLoading(true);
+
+    try {
+      const response = await fetch('/api/chat/ask', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          question,
+          history: history.map((item) => ({ role: item.role, content: item.content })),
+        }),
+      });
+
+      const payload = (await response.json()) as AskApiResponse;
+      if (!response.ok || !payload.data) {
+        throw new Error(payload.error ?? 'Ask AI request failed.');
+      }
+
+      const citedTitles = payload.data.sources.map((source) => source.title).join(', ');
+      const content =
+        payload.data.sources.length > 0
+          ? `${payload.data.answer}\n\nCited documents: ${citedTitles}`
+          : payload.data.answer;
+
+      const assistantMessage: Message = {
+        id: `assistant-${Date.now()}`,
+        content,
+        role: 'assistant',
+        createdAt: new Date(),
+        sources: payload.data.sources,
+        webSearchSuggestion: payload.data.webSearchSuggestion,
+        notFoundInVault: payload.data.notFoundInVault,
+      };
+
+      setConversationMessages((prev) => ({
+        ...prev,
+        [conversationId]: [...(prev[conversationId] ?? []), assistantMessage],
+      }));
+    } catch (error) {
+      const fallbackMessage: Message = {
+        id: `assistant-error-${Date.now()}`,
+        content:
+          error instanceof Error
+            ? `Ask AI error: ${error.message}`
+            : 'Ask AI failed due to an unknown error.',
+        role: 'assistant',
+        createdAt: new Date(),
+      };
+
+      setConversationMessages((prev) => ({
+        ...prev,
+        [conversationId]: [...(prev[conversationId] ?? []), fallbackMessage],
+      }));
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -80,30 +176,61 @@ export default function ChatPage() {
 
       return [autoConversation, ...prev];
     });
+
+    let historyForPrompt: Message[] = [];
+    setConversationMessages((prev) => {
+      const existing = prev[promptConversationId] ?? [];
+      if (existing.some((item) => item.id === prefixedMessage.id)) {
+        historyForPrompt = existing;
+        return prev;
+      }
+
+      const updated = [...existing, prefixedMessage];
+      historyForPrompt = updated;
+      return {
+        ...prev,
+        [promptConversationId]: updated,
+      };
+    });
+
     setCurrentConversationId(autoConversation.id);
-    setMessages([prefixedMessage]);
+    void requestAssistantReply(prompt, promptConversationId, historyForPrompt);
   }, [hydratedPrompt]);
 
   const handleSendMessage = (message: string) => {
-    // Add user message
+    let targetConversationId = currentConversationId;
+    if (!targetConversationId) {
+      const newConversation: Conversation = {
+        id: Date.now().toString(),
+        title: 'New Conversation',
+        createdAt: new Date(),
+      };
+
+      setConversations((prev) => [newConversation, ...prev]);
+      setCurrentConversationId(newConversation.id);
+      targetConversationId = newConversation.id;
+    }
+
     const userMessage: Message = {
       id: Date.now().toString(),
       content: message,
       role: 'user',
       createdAt: new Date(),
     };
-    setMessages([...messages, userMessage]);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        content: 'This is a simulated response. Integrate with your OpenAI API for real responses.',
-        role: 'assistant',
-        createdAt: new Date(),
+    let requestHistory: Message[] = [];
+    const conversationId = targetConversationId;
+    setConversationMessages((prev) => {
+      const existing = prev[conversationId] ?? [];
+      const updated = [...existing, userMessage];
+      requestHistory = updated;
+      return {
+        ...prev,
+        [conversationId]: updated,
       };
-      setMessages((prev) => [...prev, assistantMessage]);
-    }, 1000);
+    });
+
+    void requestAssistantReply(message, conversationId, requestHistory);
   };
 
   const handleNewConversation = () => {
@@ -114,14 +241,21 @@ export default function ChatPage() {
     };
     setConversations([newConversation, ...conversations]);
     setCurrentConversationId(newConversation.id);
-    setMessages([]);
+    setConversationMessages((prev) => ({
+      ...prev,
+      [newConversation.id]: [],
+    }));
   };
 
   const handleDeleteConversation = (id: string) => {
     setConversations(conversations.filter((c) => c.id !== id));
+    setConversationMessages((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     if (currentConversationId === id) {
       setCurrentConversationId(null);
-      setMessages([]);
     }
   };
 
@@ -181,8 +315,12 @@ export default function ChatPage() {
               content: msg.content,
               role: msg.role,
               createdAt: msg.createdAt,
+              sources: msg.sources,
+              webSearchSuggestion: msg.webSearchSuggestion,
+              notFoundInVault: msg.notFoundInVault,
             }))}
             onSendMessage={handleSendMessage}
+            isLoading={isLoading}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400">

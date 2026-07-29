@@ -1,13 +1,28 @@
 'use client';
 
 import { useState } from 'react';
-import { Send } from 'lucide-react';
+import { ExternalLink, Send } from 'lucide-react';
+
+interface SourceItem {
+  id: string;
+  title: string;
+  summary: string;
+  keywords: string[];
+  topics: string[];
+  sourceType: string;
+  uploadDate: string;
+  fileName: string;
+  extractedMetadata: Record<string, unknown>;
+}
 
 interface Message {
   id: string;
   content: string;
   role: 'user' | 'assistant';
   createdAt: Date;
+  sources?: SourceItem[];
+  webSearchSuggestion?: string | null;
+  notFoundInVault?: boolean;
 }
 
 interface ChatPanelProps {
@@ -50,13 +65,44 @@ export function ChatPanel({ messages = [], onSendMessage, isLoading = false }: C
               className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-xs px-4 py-2 rounded-lg ${
+                className={`max-w-2xl px-4 py-3 rounded-lg ${
                   message.role === 'user'
                     ? 'bg-blue-600 text-white'
                     : 'bg-slate-700 text-slate-100'
                 }`}
               >
-                {message.content}
+                <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+
+                {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
+                  <details className="mt-3 rounded border border-slate-600 bg-slate-800/70 p-2">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-300">
+                      Sources ({message.sources.length})
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {message.sources.map((source) => (
+                        <div key={source.id} className="rounded border border-slate-600 bg-slate-900/50 p-2">
+                          <p className="text-xs font-semibold text-white">{source.title}</p>
+                          <p className="mt-1 text-xs text-slate-300 line-clamp-3">{source.summary}</p>
+                          <p className="mt-1 text-[11px] text-slate-400">
+                            {source.fileName} • {source.sourceType.replace('_', ' ')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+
+                {message.role === 'assistant' && message.notFoundInVault && message.webSearchSuggestion && (
+                  <a
+                    href={message.webSearchSuggestion}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 inline-flex items-center gap-2 rounded border border-slate-500 px-3 py-1 text-xs text-slate-200 hover:bg-slate-600"
+                  >
+                    <ExternalLink size={12} />
+                    Optional Web Search
+                  </a>
+                )}
               </div>
             </div>
           ))
