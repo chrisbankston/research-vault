@@ -96,10 +96,12 @@ src/
    - `GITHUB_MODELS_EMBEDDING_MODEL` (optional, default `text-embedding-3-small`)
 
    Research Anything web provider variables:
-   - `WEB_SEARCH_PROVIDER` (optional, `duckduckgo` or `tavily`, default `duckduckgo`)
+   - `TAVILY_API_KEY` (required for default Research Anything behavior)
+   - `WEB_SEARCH_PROVIDER` (optional, `tavily` or `duckduckgo`)
+   - when `WEB_SEARCH_PROVIDER` is unset, Tavily is auto-selected if `TAVILY_API_KEY` exists
+   - DuckDuckGo is legacy fallback only and is used only when explicitly configured
    - `WEB_SOURCE_FETCH_TIMEOUT_MS` (optional, per-source timeout, default `10000`)
    - `WEB_RESEARCH_TIMEOUT_MS` (optional, total pipeline timeout, default `120000`)
-   - `TAVILY_API_KEY` (required only when `WEB_SEARCH_PROVIDER=tavily`)
 
 4. Run the development server:
    ```bash
@@ -140,6 +142,8 @@ Run the SQL schema from `src/database/schema.sql` in your Supabase dashboard to 
 
 1. User selects **Research Anything** in chat.
 2. The app searches the web using a configurable provider.
+   - Primary: Tavily structured search API
+   - Legacy fallback: DuckDuckGo JSON API only when explicitly configured
 3. It retrieves and deduplicates relevant sources.
 4. It extracts source content and synthesizes a structured report.
 5. The report includes:

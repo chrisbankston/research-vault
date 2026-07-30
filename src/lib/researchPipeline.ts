@@ -11,7 +11,7 @@ export type ResearchProgressState =
   | 'complete'
   | 'failed';
 
-type SearchProvider = 'duckduckgo' | 'tavily';
+type SearchProviderName = 'tavily' | 'duckduckgo-legacy';
 
 interface ChatHistoryItem {
   role: 'user' | 'assistant';
@@ -25,6 +25,11 @@ interface WebSearchHit {
   publisher: string;
   rank: number;
   score: number;
+}
+
+interface SearchProvider {
+  name: SearchProviderName;
+  search: (question: string, timeoutMs: number) => Promise<WebSearchHit[]>;
 }
 
 interface SourceDocument extends WebSearchHit {
@@ -56,18 +61,8 @@ interface ResearchModelResponse {
 
 interface StoredKnowledgeCardRow {
   id: string;
-  title: string;
-  summary: string;
-  keywords: string[];
-  topics: string[];
-  action_items: string[];
-  people_mentioned: string[];
-  dates_mentioned: string[];
-  tags: string[];
-  source_type: string;
   upload_date: string;
   extracted_text: string;
-  file_name: string;
   extracted_metadata: Record<string, unknown> | null;
 }
 
@@ -128,15 +123,6 @@ const parsePositiveInt = (value: string | undefined, fallback: number): number =
   }
 
   return parsed;
-};
-
-const getSearchProvider = (): SearchProvider => {
-  const provider = process.env.WEB_SEARCH_PROVIDER?.trim().toLowerCase();
-  if (provider === 'tavily') {
-    return 'tavily';
-  }
-
-  return 'duckduckgo';
 };
 
 const getPublisherFromUrl = (url: string): string => {
@@ -206,38 +192,27 @@ const dedupeByUrl = <T extends { url: string }>(items: T[]): T[] => {
   return output;
 };
 
-const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number): Promise<Response> => {
+const fetchWithTimeout = async (
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<Response> => {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, {
+    return await fetch(url, {
       ...init,
       signal: controller.signal,
     });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Provider timeout.');
+    }
 
-    return response;
+    throw error;
   } finally {
     clearTimeout(timer);
-  }
-};
-
-const decodeDuckDuckGoRedirect = (href: string): string => {
-  if (!href.startsWith('http')) {
-    return href;
-  }
-
-  try {
-    const parsed = new URL(href);
-    if (parsed.hostname.includes('duckduckgo.com')) {
-      const direct = parsed.searchParams.get('uddg');
-      if (direct) {
-        return decodeURIComponent(direct);
-      }
-    }
-    return href;
-  } catch {
-    return href;
   }
 };
 
@@ -255,123 +230,158 @@ const stripHtml = (html: string): string => {
   return normalizeWhitespace(withoutScripts);
 };
 
-const searchDuckDuckGo = async (question: string, timeoutMs: number): Promise<WebSearchHit[]> => {
-  const query = encodeURIComponent(question);
-  const response = await fetchWithTimeout(
-    `https://html.duckduckgo.com/html/?q=${query}`,
-    {
-      headers: {
-        'User-Agent': 'ResearchVaultBot/2.0 (+https://research-vault.local)',
-      },
-      cache: 'no-store',
-    },
-    timeoutMs
-  );
-
-  if (!response.ok) {
-    throw new Error(`DuckDuckGo search failed with status ${response.status}.`);
-  }
-
-  const html = await response.text();
-  const results: WebSearchHit[] = [];
-  const anchorRegex = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/gi;
-  let match: RegExpExecArray | null = anchorRegex.exec(html);
-  let rank = 0;
-
-  while (match && rank < MAX_SEARCH_RESULTS * 2) {
-    const rawUrl = decodeDuckDuckGoRedirect(match[1]);
-    const title = normalizeWhitespace(stripHtml(match[2]));
-
-    if (rawUrl.startsWith('http')) {
-      results.push({
-        title: title || getPublisherFromUrl(rawUrl),
-        url: rawUrl,
-        snippet: '',
-        publisher: getPublisherFromUrl(rawUrl),
-        rank,
-        score: 0,
-      });
-      rank += 1;
+const tavilyProvider: SearchProvider = {
+  name: 'tavily',
+  search: async (question: string, timeoutMs: number) => {
+    const apiKey = process.env.TAVILY_API_KEY?.trim();
+    if (!apiKey) {
+      throw new Error('No Tavily API key configured.');
     }
 
-    match = anchorRegex.exec(html);
-  }
-
-  if (results.length === 0) {
-    throw new Error('DuckDuckGo returned no parsable search results.');
-  }
-
-  return results;
-};
-
-const searchTavily = async (question: string, timeoutMs: number): Promise<WebSearchHit[]> => {
-  const apiKey = process.env.TAVILY_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error('Tavily provider selected but TAVILY_API_KEY is not configured.');
-  }
-
-  const response = await fetchWithTimeout(
-    'https://api.tavily.com/search',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const response = await fetchWithTimeout(
+      'https://api.tavily.com/search',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query: question,
+          search_depth: 'advanced',
+          max_results: MAX_SEARCH_RESULTS,
+          include_answer: false,
+          include_raw_content: false,
+        }),
+        cache: 'no-store',
       },
-      body: JSON.stringify({
-        api_key: apiKey,
-        query: question,
-        search_depth: 'advanced',
-        max_results: MAX_SEARCH_RESULTS,
-        include_answer: false,
-        include_raw_content: false,
-      }),
-      cache: 'no-store',
-    },
-    timeoutMs
-  );
+      timeoutMs
+    );
 
-  if (!response.ok) {
-    throw new Error(`Tavily search failed with status ${response.status}.`);
-  }
+    if (!response.ok) {
+      throw new Error(`Tavily search failed with status ${response.status}.`);
+    }
 
-  const payload = (await response.json()) as {
-    results?: Array<{
-      title?: string;
-      url?: string;
-      content?: string;
-      score?: number;
-    }>;
-  };
+    const payload = (await response.json()) as {
+      results?: Array<{
+        title?: string;
+        url?: string;
+        content?: string;
+        score?: number;
+      }>;
+    };
 
-  const results = (payload.results ?? [])
-    .filter((entry) => Boolean(entry.url))
-    .map((entry, index) => ({
-      title: normalizeWhitespace(entry.title ?? '') || getPublisherFromUrl(entry.url ?? ''),
-      url: entry.url ?? '',
-      snippet: normalizeWhitespace(entry.content ?? ''),
-      publisher: getPublisherFromUrl(entry.url ?? ''),
-      rank: index,
-      score: Number(entry.score ?? 0),
-    }))
-    .filter((entry) => entry.url.startsWith('http'));
+    const results = (payload.results ?? [])
+      .filter((entry) => Boolean(entry.url))
+      .map((entry, index) => ({
+        title: normalizeWhitespace(entry.title ?? '') || getPublisherFromUrl(entry.url ?? ''),
+        url: entry.url ?? '',
+        snippet: normalizeWhitespace(entry.content ?? ''),
+        publisher: getPublisherFromUrl(entry.url ?? ''),
+        rank: index,
+        score: Number(entry.score ?? 0),
+      }))
+      .filter((entry) => entry.url.startsWith('http'));
 
-  if (results.length === 0) {
-    throw new Error('Tavily returned no results.');
-  }
+    if (results.length === 0) {
+      throw new Error('No search results returned.');
+    }
 
-  return results;
+    return results;
+  },
 };
 
-const searchWeb = async (
-  provider: SearchProvider,
-  question: string,
-  timeoutMs: number
-): Promise<WebSearchHit[]> => {
-  if (provider === 'tavily') {
-    return searchTavily(question, timeoutMs);
+const flattenDuckTopics = (
+  topics: Array<{ FirstURL?: string; Text?: string; Topics?: Array<{ FirstURL?: string; Text?: string }> }>
+): Array<{ url: string; text: string }> => {
+  const output: Array<{ url: string; text: string }> = [];
+
+  for (const topic of topics) {
+    if (topic.FirstURL && topic.Text) {
+      output.push({ url: topic.FirstURL, text: topic.Text });
+    }
+
+    for (const nested of topic.Topics ?? []) {
+      if (nested.FirstURL && nested.Text) {
+        output.push({ url: nested.FirstURL, text: nested.Text });
+      }
+    }
   }
 
-  return searchDuckDuckGo(question, timeoutMs);
+  return output;
+};
+
+const duckDuckGoLegacyProvider: SearchProvider = {
+  name: 'duckduckgo-legacy',
+  search: async (question: string, timeoutMs: number) => {
+    const query = encodeURIComponent(question);
+    const response = await fetchWithTimeout(
+      `https://api.duckduckgo.com/?q=${query}&format=json&no_html=1&skip_disambig=0`,
+      {
+        cache: 'no-store',
+      },
+      timeoutMs
+    );
+
+    if (!response.ok) {
+      throw new Error(`DuckDuckGo legacy search failed with status ${response.status}.`);
+    }
+
+    const payload = (await response.json()) as {
+      RelatedTopics?: Array<{
+        FirstURL?: string;
+        Text?: string;
+        Topics?: Array<{ FirstURL?: string; Text?: string }>;
+      }>;
+    };
+
+    const topics = flattenDuckTopics(payload.RelatedTopics ?? []);
+    const results = topics
+      .map((topic, index) => {
+        const title = topic.text.split(' - ')[0]?.trim() || getPublisherFromUrl(topic.url);
+        return {
+          title,
+          url: topic.url,
+          snippet: topic.text,
+          publisher: getPublisherFromUrl(topic.url),
+          rank: index,
+          score: 0,
+        };
+      })
+      .filter((entry) => entry.url.startsWith('http'))
+      .slice(0, MAX_SEARCH_RESULTS);
+
+    if (results.length === 0) {
+      throw new Error('No search results returned.');
+    }
+
+    return results;
+  },
+};
+
+const resolveSearchProvider = (): SearchProvider => {
+  const configured = process.env.WEB_SEARCH_PROVIDER?.trim().toLowerCase();
+  const hasTavilyKey = Boolean(process.env.TAVILY_API_KEY?.trim());
+
+  if (configured === 'duckduckgo' || configured === 'duckduckgo-legacy') {
+    return duckDuckGoLegacyProvider;
+  }
+
+  if (configured && configured !== 'tavily') {
+    throw new Error(
+      'Unsupported WEB_SEARCH_PROVIDER. Supported values are tavily or duckduckgo.'
+    );
+  }
+
+  if (configured === 'tavily' && !hasTavilyKey) {
+    throw new Error('No Tavily API key configured.');
+  }
+
+  if (hasTavilyKey) {
+    return tavilyProvider;
+  }
+
+  throw new Error('No Tavily API key configured.');
 };
 
 const rankSearchHits = (question: string, hits: WebSearchHit[]): WebSearchHit[] => {
@@ -592,12 +602,12 @@ const synthesizeReport = async (
     (fact) => fact.sourceIds.length > 0 && fact.sourceIds.every((id) => sourceIds.has(id))
   );
 
-  const qualityAssessment = parsed.qualityAssessment || buildFallbackReport(question, sources).qualityAssessment;
+  const fallback = buildFallbackReport(question, sources);
   return {
-    executiveSummary: parsed.executiveSummary || buildFallbackReport(question, sources).executiveSummary,
-    sourcedFacts: validatedFacts.length > 0 ? validatedFacts : buildFallbackReport(question, sources).sourcedFacts,
-    conclusions: parsed.conclusions.length > 0 ? parsed.conclusions : buildFallbackReport(question, sources).conclusions,
-    qualityAssessment,
+    executiveSummary: parsed.executiveSummary || fallback.executiveSummary,
+    sourcedFacts: validatedFacts.length > 0 ? validatedFacts : fallback.sourcedFacts,
+    conclusions: parsed.conclusions.length > 0 ? parsed.conclusions : fallback.conclusions,
+    qualityAssessment: parsed.qualityAssessment || fallback.qualityAssessment,
     keywords: dedupeList(parsed.keywords, 10),
     topics: dedupeList(parsed.topics, 6),
     actionItems: dedupeList(parsed.actionItems, 8),
@@ -641,7 +651,7 @@ const buildReportMarkdown = (
     .join('\n');
 
   return [
-    `# Research Report`,
+    '# Research Report',
     '',
     `Question: ${question}`,
     '',
@@ -662,44 +672,58 @@ const buildReportMarkdown = (
   ].join('\n');
 };
 
-const findRecentDuplicate = async (
-  question: string
-): Promise<StoredKnowledgeCardRow | null> => {
-  const supabase = getSupabaseServerClient();
+const mapSupabaseError = (error: unknown): never => {
+  const message = error instanceof Error ? error.message : '';
+  if (message.includes('Supabase server credentials are not configured')) {
+    throw new Error('Supabase credentials missing.');
+  }
 
-  const { data, error } = await supabase
-    .from('knowledge_cards')
-    .select(
-      'id,title,summary,keywords,topics,action_items,people_mentioned,dates_mentioned,tags,source_type,upload_date,extracted_text,file_name,extracted_metadata'
-    )
-    .eq('source_type', 'web_research')
-    .eq('processing_status', 'completed')
-    .order('upload_date', { ascending: false })
-    .limit(50);
+  if (message.toLowerCase().includes('fetch failed')) {
+    throw new Error('Unable to save research.');
+  }
 
-  if (error) {
+  throw new Error('Unable to save research.');
+};
+
+const findRecentDuplicate = async (question: string): Promise<StoredKnowledgeCardRow | null> => {
+  try {
+    const supabase = getSupabaseServerClient();
+
+    const { data, error } = await supabase
+      .from('knowledge_cards')
+      .select('id,upload_date,extracted_text,extracted_metadata')
+      .eq('source_type', 'web_research')
+      .eq('processing_status', 'completed')
+      .order('upload_date', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      return null;
+    }
+
+    const rows = (data ?? []) as unknown as StoredKnowledgeCardRow[];
+    const normalized = normalizeWhitespace(question).toLowerCase();
+    const windowMs = 30 * 60 * 1000;
+    const now = Date.now();
+
+    for (const row of rows) {
+      const metadata = row.extracted_metadata ?? {};
+      const originalQuestion = String((metadata as { originalQuestion?: unknown }).originalQuestion ?? '');
+      const uploaded = Date.parse(row.upload_date);
+      if (!Number.isFinite(uploaded) || now - uploaded > windowMs) {
+        continue;
+      }
+
+      if (normalizeWhitespace(originalQuestion).toLowerCase() === normalized) {
+        return row;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    mapSupabaseError(error);
     return null;
   }
-
-  const rows = (data ?? []) as unknown as StoredKnowledgeCardRow[];
-  const normalized = normalizeWhitespace(question).toLowerCase();
-  const windowMs = 30 * 60 * 1000;
-  const now = Date.now();
-
-  for (const row of rows) {
-    const metadata = row.extracted_metadata ?? {};
-    const originalQuestion = String((metadata as { originalQuestion?: unknown }).originalQuestion ?? '');
-    const uploaded = Date.parse(row.upload_date);
-    if (!Number.isFinite(uploaded) || now - uploaded > windowMs) {
-      continue;
-    }
-
-    if (normalizeWhitespace(originalQuestion).toLowerCase() === normalized) {
-      return row;
-    }
-  }
-
-  return null;
 };
 
 const toResearchSources = (sources: SourceDocument[]): ResearchSource[] => {
@@ -718,61 +742,71 @@ const saveResearchKnowledgeCard = async (input: {
   reportMarkdown: string;
   report: ResearchReport;
   sources: SourceDocument[];
-  provider: SearchProvider;
+  provider: SearchProviderName;
 }): Promise<string> => {
-  const supabase = getSupabaseServerClient();
-  const id = randomUUID();
-  const uploadDate = new Date().toISOString();
+  try {
+    const supabase = getSupabaseServerClient();
+    const id = randomUUID();
+    const uploadDate = new Date().toISOString();
 
-  const tags = dedupeList([...input.report.topics, ...input.report.keywords], 8);
-  const title = `Web Research: ${input.question.slice(0, 120)}`;
+    const tags = dedupeList([...input.report.topics, ...input.report.keywords], 8);
+    const title = `Web Research: ${input.question.slice(0, 120)}`;
 
-  const extractedMetadata = {
-    originalQuestion: input.question,
-    searchProvider: input.provider,
-    generatedAt: uploadDate,
-    sources: toResearchSources(input.sources),
-    sourcedFacts: input.report.sourcedFacts,
-    conclusions: input.report.conclusions,
-    qualityAssessment: input.report.qualityAssessment,
-    reportMarkdown: input.reportMarkdown,
-  };
+    const extractedMetadata = {
+      originalQuestion: input.question,
+      searchProvider: input.provider,
+      generatedAt: uploadDate,
+      sources: toResearchSources(input.sources),
+      sourcedFacts: input.report.sourcedFacts,
+      conclusions: input.report.conclusions,
+      qualityAssessment: input.report.qualityAssessment,
+      reportMarkdown: input.reportMarkdown,
+    };
 
-  const row = {
-    id,
-    title,
-    summary: input.report.executiveSummary,
-    keywords: dedupeList(input.report.keywords, 10),
-    topics: dedupeList(input.report.topics, 6),
-    action_items: dedupeList(input.report.actionItems, 8),
-    people_mentioned: dedupeList(input.report.peopleMentioned, 10),
-    dates_mentioned: dedupeList(input.report.datesMentioned, 12),
-    tags,
-    suggested_workspace: 'Web Research',
-    source_type: 'web_research',
-    processing_status: 'completed',
-    original_file_path: `web_research/${id}.md`,
-    upload_date: uploadDate,
-    related_documents: [],
-    extracted_text: input.reportMarkdown,
-    file_name: `web-research-${uploadDate.slice(0, 10)}.md`,
-    extracted_metadata: extractedMetadata,
-  };
+    const row = {
+      id,
+      title,
+      summary: input.report.executiveSummary,
+      keywords: dedupeList(input.report.keywords, 10),
+      topics: dedupeList(input.report.topics, 6),
+      action_items: dedupeList(input.report.actionItems, 8),
+      people_mentioned: dedupeList(input.report.peopleMentioned, 10),
+      dates_mentioned: dedupeList(input.report.datesMentioned, 12),
+      tags,
+      suggested_workspace: 'Web Research',
+      source_type: 'web_research',
+      processing_status: 'completed',
+      original_file_path: `web_research/${id}.md`,
+      upload_date: uploadDate,
+      related_documents: [],
+      extracted_text: input.reportMarkdown,
+      file_name: `web-research-${uploadDate.slice(0, 10)}.md`,
+      extracted_metadata: extractedMetadata,
+    };
 
-  const { error } = await supabase.from('knowledge_cards').insert(row);
+    const { error } = await supabase.from('knowledge_cards').insert(row);
 
-  if (error) {
-    throw new Error(`Unable to save web research to vault: ${error.message}`);
+    if (error) {
+      throw new Error('Unable to save research.');
+    }
+
+    return id;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message === 'Unable to save research.') {
+      throw error;
+    }
+
+    mapSupabaseError(error);
+    return '';
   }
-
-  return id;
 };
 
 const asDeadline = (totalTimeoutMs: number): number => Date.now() + totalTimeoutMs;
 
 const assertWithinDeadline = (deadlineMs: number) => {
   if (Date.now() > deadlineMs) {
-    throw new Error('Research operation timed out before completion.');
+    throw new Error('Provider timeout.');
   }
 };
 
@@ -795,10 +829,10 @@ export const researchAnything = async (
     process.env.WEB_SOURCE_FETCH_TIMEOUT_MS,
     DEFAULT_FETCH_TIMEOUT_MS
   );
-  const provider = getSearchProvider();
   const deadline = asDeadline(totalTimeoutMs);
 
   try {
+    const provider = resolveSearchProvider();
     assertWithinDeadline(deadline);
 
     const duplicate = await findRecentDuplicate(question);
@@ -827,9 +861,13 @@ export const researchAnything = async (
     }
 
     pushProgress('searching');
-    const rawHits = await searchWeb(provider, question, fetchTimeoutMs);
+    const rawHits = await provider.search(question, fetchTimeoutMs);
     const dedupedHits = dedupeByUrl(rawHits);
     const rankedHits = rankSearchHits(question, dedupedHits).slice(0, MAX_SEARCH_RESULTS);
+
+    if (rankedHits.length === 0) {
+      throw new Error('No search results returned.');
+    }
 
     assertWithinDeadline(deadline);
     pushProgress('reading_sources');
@@ -842,9 +880,7 @@ export const researchAnything = async (
     );
 
     if (retrievedSources.length < 2) {
-      throw new Error(
-        'Research quality is poor because fewer than two web sources were successfully retrieved.'
-      );
+      throw new Error('No search results returned.');
     }
 
     assertWithinDeadline(deadline);
@@ -862,7 +898,7 @@ export const researchAnything = async (
       reportMarkdown,
       report,
       sources: retrievedSources,
-      provider,
+      provider: provider.name,
     });
 
     pushProgress('complete');
@@ -880,7 +916,10 @@ export const researchAnything = async (
     };
   } catch (error) {
     pushProgress('failed');
-    const message = error instanceof Error ? error.message : 'Research Anything failed.';
-    throw new Error(`${message} Progress: ${progress.join(' -> ') || 'failed'}`);
+    if (error instanceof Error) {
+      throw error;
+    }
+
+    throw new Error('Research request failed.');
   }
 };
