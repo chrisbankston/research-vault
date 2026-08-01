@@ -311,7 +311,7 @@ const flattenDuckTopics = (
   return output;
 };
 
-const duckDuckGoLegacyProvider: SearchProvider = {
+export const duckDuckGoLegacyProvider: SearchProvider = {
   name: 'duckduckgo-legacy',
   search: async (question: string, timeoutMs: number) => {
     const query = encodeURIComponent(question);
