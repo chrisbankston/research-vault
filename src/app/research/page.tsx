@@ -3,11 +3,26 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { SearchBar } from '@/components/SearchBar';
-import { ResearchCard } from '@/components/ResearchCard';
-import { DocumentUploadPanel } from '@/components/DocumentUploadPanel';
+import dynamic from 'next/dynamic';
 import { Plus, Filter } from 'lucide-react';
 import { KnowledgeCard, ResearchItem } from '@/types';
 import { useRouter } from 'next/navigation';
+
+const ResearchCard = dynamic(
+  () => import('@/components/ResearchCard').then((module) => module.ResearchCard),
+  {
+    ssr: false,
+    loading: () => <div className="h-44 rounded-lg border border-slate-700 bg-slate-800" />,
+  }
+);
+
+const DocumentUploadPanel = dynamic(
+  () => import('@/components/DocumentUploadPanel').then((module) => module.DocumentUploadPanel),
+  {
+    ssr: false,
+    loading: () => <div className="h-56 rounded-2xl border border-slate-700 bg-slate-800/70" />,
+  }
+);
 
 // Mock data
 const mockResearch: ResearchItem[] = [
@@ -55,6 +70,7 @@ export default function ResearchPage() {
   const [research, setResearch] = useState(mockResearch);
   const [knowledgeCards, setKnowledgeCards] = useState<KnowledgeCard[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadingCards, setLoadingCards] = useState(true);
 
   const upsertKnowledgeCard = (knowledgeCard: KnowledgeCard) => {
     setKnowledgeCards((prev) => {
@@ -66,6 +82,7 @@ export default function ResearchPage() {
   useEffect(() => {
     const loadKnowledgeCards = async () => {
       try {
+        setLoadingCards(true);
         setLoadError(null);
         const response = await fetch('/api/knowledge/cards', { cache: 'no-store' });
         const payload = (await response.json()) as { data?: KnowledgeCard[]; error?: string };
@@ -79,6 +96,8 @@ export default function ResearchPage() {
         const message = error instanceof Error ? error.message : 'Failed to load knowledge cards.';
         setLoadError(message);
         console.error('Knowledge card load error:', message);
+      } finally {
+        setLoadingCards(false);
       }
     };
 
@@ -95,7 +114,7 @@ export default function ResearchPage() {
         sourceType: card.sourceType,
         processingStatus: card.processingStatus,
         uploadDate: card.uploadDate,
-        viewOriginalHref: `/api/knowledge/files/${card.id}`,
+        viewOriginalHref: card.originalFilePath ? `/api/knowledge/files/${card.id}` : undefined,
         searchable: [
           card.title,
           card.summary,
@@ -122,9 +141,10 @@ export default function ResearchPage() {
     [knowledgeCards, research]
   );
 
-  const filteredResearch = libraryItems.filter((item) =>
-    item.searchable.includes(searchQuery.toLowerCase())
-  );
+  const filteredItems = useMemo(() => {
+    const normalized = searchQuery.toLowerCase();
+    return libraryItems.filter((item) => item.searchable.includes(normalized));
+  }, [libraryItems, searchQuery]);
 
   const handleDeleteResearch = (id: string) => {
     setResearch((prev) => prev.filter((item) => item.id !== id));
@@ -132,7 +152,7 @@ export default function ResearchPage() {
   };
 
   const handleAskAI = (id: string) => {
-    const target = filteredResearch.find((item) => item.id === id);
+    const target = filteredItems.find((item) => item.id === id);
     if (!target) {
       router.push('/chat');
       return;
@@ -179,11 +199,15 @@ export default function ResearchPage() {
       {/* Research Items */}
       <div className="space-y-4">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-white">Research Items ({filteredResearch.length})</h2>
+          <h2 className="text-2xl font-bold text-white">Research Items ({filteredItems.length})</h2>
         </div>
 
-        {filteredResearch.length > 0 ? (
-          filteredResearch.map((item) => (
+        {loadingCards ? (
+          <div className="text-center py-12 bg-slate-800 border border-slate-700 rounded-lg">
+            <p className="text-slate-400 text-lg">Loading research items...</p>
+          </div>
+        ) : filteredItems.length > 0 ? (
+          filteredItems.map((item) => (
             <ResearchCard
               key={item.id}
               research={item}

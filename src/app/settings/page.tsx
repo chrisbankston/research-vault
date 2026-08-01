@@ -14,6 +14,8 @@ export default function SettingsPage() {
   });
 
   const [hasChanges, setHasChanges] = useState(false);
+  const [repairRunning, setRepairRunning] = useState(false);
+  const [repairReport, setRepairReport] = useState<string | null>(null);
 
   const handleChange = (field: string, value: any) => {
     setSettings((prev) => ({ ...prev, [field]: value }));
@@ -27,6 +29,43 @@ export default function SettingsPage() {
   const handleSave = () => {
     console.log('Settings saved:', settings);
     setHasChanges(false);
+  };
+
+  const handleRepairLibrary = async () => {
+    setRepairRunning(true);
+    setRepairReport(null);
+
+    try {
+      const response = await fetch('/api/knowledge/repair', {
+        method: 'POST',
+      });
+
+      const payload = (await response.json()) as {
+        data?: {
+          scannedCards: number;
+          scannedStorageObjects: number;
+          issues: Array<unknown>;
+          repaired: Array<unknown>;
+          orphanedStorageFiles: Array<unknown>;
+        };
+        error?: string;
+      };
+
+      if (!response.ok || !payload.data) {
+        throw new Error(payload.error ?? 'Repair Library command failed.');
+      }
+
+      setRepairReport(
+        `Scanned ${payload.data.scannedCards} cards and ${payload.data.scannedStorageObjects} files. `
+        + `Issues: ${payload.data.issues.length}. Repaired: ${payload.data.repaired.length}. `
+        + `Orphaned files: ${payload.data.orphanedStorageFiles.length}.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Repair Library command failed.';
+      setRepairReport(message);
+    } finally {
+      setRepairRunning(false);
+    }
   };
 
   return (
@@ -139,6 +178,21 @@ export default function SettingsPage() {
         <button className="bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-lg transition-colors font-medium">
           Delete Account
         </button>
+      </div>
+
+      <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 mb-6">
+        <h2 className="text-xl font-bold text-white mb-2">Repair Library</h2>
+        <p className="text-slate-400 mb-4 text-sm">
+          Scan knowledge cards for missing files, blank paths, and broken signed URLs, then repair recoverable records.
+        </p>
+        <button
+          onClick={handleRepairLibrary}
+          disabled={repairRunning}
+          className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg transition-colors font-medium"
+        >
+          {repairRunning ? 'Running Repair...' : 'Run Repair Library'}
+        </button>
+        {repairReport && <p className="mt-3 text-sm text-slate-300">{repairReport}</p>}
       </div>
 
       {/* Action Buttons */}

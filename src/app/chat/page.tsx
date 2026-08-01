@@ -1,8 +1,16 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { ChatPanel } from '@/components/ChatPanel';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { Plus, MessageSquare, Trash2 } from 'lucide-react';
+
+const ChatPanel = dynamic(
+  () => import('@/components/ChatPanel').then((module) => module.ChatPanel),
+  {
+    ssr: false,
+    loading: () => <div className="h-full rounded-lg border border-slate-700 bg-slate-800" />,
+  }
+);
 
 type ChatMode = 'ask_my_vault' | 'research_anything';
 
@@ -85,7 +93,7 @@ export default function ChatPage() {
 
   const messages = currentConversationId ? (conversationMessages[currentConversationId] ?? []) : [];
 
-  const requestAssistantReply = async (
+  const requestAssistantReply = useCallback(async (
     question: string,
     conversationId: string,
     history: Message[],
@@ -179,7 +187,7 @@ export default function ChatPage() {
       pendingRequests.current.delete(requestKey);
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -231,9 +239,9 @@ export default function ChatPage() {
 
     setCurrentConversationId(autoConversation.id);
     void requestAssistantReply(prompt, promptConversationId, historyForPrompt, 'ask_my_vault');
-  }, [hydratedPrompt]);
+  }, [hydratedPrompt, requestAssistantReply]);
 
-  const handleSendMessage = (message: string) => {
+  const handleSendMessage = useCallback((message: string) => {
     let targetConversationId = currentConversationId;
     if (!targetConversationId) {
       const newConversation: Conversation = {
@@ -268,24 +276,24 @@ export default function ChatPage() {
     });
 
     void requestAssistantReply(message, conversationId, requestHistory, activeMode);
-  };
+  }, [activeMode, currentConversationId, requestAssistantReply]);
 
-  const handleNewConversation = () => {
+  const handleNewConversation = useCallback(() => {
     const newConversation: Conversation = {
       id: Date.now().toString(),
       title: 'New Conversation',
       createdAt: new Date(),
     };
-    setConversations([newConversation, ...conversations]);
+    setConversations((prev) => [newConversation, ...prev]);
     setCurrentConversationId(newConversation.id);
     setConversationMessages((prev) => ({
       ...prev,
       [newConversation.id]: [],
     }));
-  };
+  }, []);
 
-  const handleDeleteConversation = (id: string) => {
-    setConversations(conversations.filter((c) => c.id !== id));
+  const handleDeleteConversation = useCallback((id: string) => {
+    setConversations((prev) => prev.filter((conversation) => conversation.id !== id));
     setConversationMessages((prev) => {
       const next = { ...prev };
       delete next[id];
@@ -294,7 +302,7 @@ export default function ChatPage() {
     if (currentConversationId === id) {
       setCurrentConversationId(null);
     }
-  };
+  }, [currentConversationId]);
 
   return (
     <div className="flex h-full">

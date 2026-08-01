@@ -33,6 +33,10 @@ export async function POST(request: Request) {
         ? await researchAnything(question, history)
         : { mode: 'ask_my_vault' as const, ...(await askVault(question, history)) };
 
+    if (!result.answer) {
+      return NextResponse.json({ error: 'Ask AI could not produce a response.' }, { status: 502 });
+    }
+
     return NextResponse.json({ data: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Ask AI request failed.';

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle2, LoaderCircle, TriangleAlert } from 'lucide-react';
 import { UploadButton } from '@/components/UploadButton';
 import { cn } from '@/lib/utils';
@@ -25,6 +25,18 @@ const isAcceptedFile = (fileName: string): boolean => {
   return extension ? ACCEPTED_EXTENSIONS.includes(extension) : false;
 };
 
+const tryParseUploadResponse = (value: string): UploadResponse => {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(value) as UploadResponse;
+  } catch {
+    return {};
+  }
+};
+
 export function DocumentUploadPanel({
   onUploaded,
   showLibraryLink = false,
@@ -32,9 +44,22 @@ export function DocumentUploadPanel({
 }: DocumentUploadPanelProps) {
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [phase, setPhase] = useState<'idle' | 'uploading' | 'processing'>('idle');
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (phase !== 'processing') {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setProgress((previous) => (previous < 98 ? previous + 1 : previous));
+    }, 350);
+
+    return () => clearInterval(interval);
+  }, [phase]);
 
   const resetMessages = () => {
     setSuccessMessage(null);
@@ -51,6 +76,7 @@ export function DocumentUploadPanel({
     resetMessages();
     setUploading(true);
     setProgress(0);
+    setPhase('uploading');
     setSelectedFileName(file.name);
 
     const formData = new FormData();
@@ -64,17 +90,23 @@ export function DocumentUploadPanel({
         return;
       }
 
-      setProgress(Math.round((event.loaded / event.total) * 100));
+      const uploadProgress = Math.round((event.loaded / event.total) * 90);
+      setProgress(uploadProgress);
+      if (uploadProgress >= 90) {
+        setPhase('processing');
+      }
     });
 
     xhr.addEventListener('load', () => {
-      const payload = (xhr.responseText ? JSON.parse(xhr.responseText) : {}) as UploadResponse;
+      const payload = tryParseUploadResponse(xhr.responseText);
 
       if (xhr.status >= 200 && xhr.status < 300 && payload.data) {
         setProgress(100);
+        setPhase('idle');
         setSuccessMessage(`Processed ${file.name} and added it to the Research Library.`);
         onUploaded?.(payload.data);
       } else {
+        setPhase('idle');
         setErrorMessage(payload.error ?? 'Upload failed.');
       }
 
@@ -83,6 +115,7 @@ export function DocumentUploadPanel({
 
     xhr.addEventListener('error', () => {
       setUploading(false);
+      setPhase('idle');
       setErrorMessage('Upload failed due to a network error.');
     });
 
@@ -90,9 +123,9 @@ export function DocumentUploadPanel({
   };
 
   const statusMessage = uploading
-    ? progress < 100
-      ? `Uploading ${selectedFileName ?? 'document'}... ${progress}%`
-      : `Upload complete. Processing ${selectedFileName ?? 'document'}...`
+    ? phase === 'uploading'
+      ? `Uploading ${selectedFileName ?? 'document'}... ${Math.min(progress, 90)}%`
+      : `Upload complete. Verifying storage integrity and processing ${selectedFileName ?? 'document'}...`
     : successMessage;
 
   return (
@@ -121,7 +154,7 @@ export function DocumentUploadPanel({
         {selectedFileName && (
           <div className="flex items-center justify-between rounded-lg border border-slate-700 bg-slate-900/60 px-4 py-3 text-sm text-slate-300">
             <span className="truncate">{selectedFileName}</span>
-            <span>{uploading ? `${progress}%` : 'Ready'}</span>
+            <span>{uploading ? `${Math.min(progress, 99)}%` : 'Ready'}</span>
           </div>
         )}
 

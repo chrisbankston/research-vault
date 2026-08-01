@@ -1,7 +1,7 @@
 'use client';
 
 import { Area } from '@/types';
-import { ArrowRight, Trash2 } from 'lucide-react';
+import { ArrowRight, Trash2, Home, Leaf, CheckCircle, Zap, Users, DollarSign } from 'lucide-react';
 import Link from 'next/link';
 
 interface AreaCardProps {
@@ -9,8 +9,17 @@ interface AreaCardProps {
   onDelete?: (id: string) => void;
 }
 
+const iconMap = {
+  Home,
+  Leaf,
+  CheckCircle,
+  Zap,
+  Users,
+  DollarSign,
+} as const;
+
 export function AreaCard({ area, onDelete }: AreaCardProps) {
-  const Icon = require('lucide-react')[area.icon] || null;
+  const Icon = iconMap[area.icon as keyof typeof iconMap] || null;
 
   return (
     <div className="bg-slate-800 border border-slate-700 rounded-lg p-6 hover:border-blue-500 transition-all hover:shadow-lg hover:shadow-blue-500/20">

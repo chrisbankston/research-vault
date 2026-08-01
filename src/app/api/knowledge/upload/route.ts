@@ -9,6 +9,7 @@ import {
   isSupportedUpload,
   RESEARCH_FILE_BUCKET,
 } from '@/lib/documentText';
+import { validateStoragePath } from '@/lib/storageIntegrity';
 import { getSupabaseServerClient } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
@@ -122,6 +123,23 @@ export async function POST(request: Request) {
       );
     }
 
+    const storageValidation = await validateStoragePath(
+      supabase,
+      RESEARCH_FILE_BUCKET,
+      originalFilePath
+    );
+    if (!storageValidation.ok) {
+      await supabase.storage.from(RESEARCH_FILE_BUCKET).remove([originalFilePath]);
+      return NextResponse.json(
+        {
+          error:
+            storageValidation.error
+            || 'Stored file failed integrity validation. Upload was aborted.',
+        },
+        { status: 500 }
+      );
+    }
+
     const pendingCard = buildPendingKnowledgeCardRecord({
       id: pendingCardId,
       fileName: maybeFile.name,
@@ -137,6 +155,30 @@ export async function POST(request: Request) {
       await supabase.storage.from(RESEARCH_FILE_BUCKET).remove([originalFilePath]);
       return NextResponse.json(
         { error: `Unable to create upload record: ${insertPendingError.message}` },
+        { status: 500 }
+      );
+    }
+
+    const pendingRowValidation = await validateStoragePath(
+      supabase,
+      RESEARCH_FILE_BUCKET,
+      pendingCard.originalFilePath
+    );
+    if (!pendingRowValidation.ok) {
+      await supabase
+        .from('knowledge_cards')
+        .update({
+          processing_status: 'failed',
+          summary: pendingRowValidation.error || 'Integrity validation failed after upload.',
+        })
+        .eq('id', pendingCard.id);
+
+      return NextResponse.json(
+        {
+          error:
+            pendingRowValidation.error
+            || 'Upload integrity validation failed before metadata extraction.',
+        },
         { status: 500 }
       );
     }
@@ -157,6 +199,26 @@ export async function POST(request: Request) {
 
       if (updateError) {
         throw new Error(`Unable to finalize knowledge card: ${updateError.message}`);
+      }
+
+      const finalizedValidation = await validateStoragePath(
+        supabase,
+        RESEARCH_FILE_BUCKET,
+        knowledgeCard.originalFilePath
+      );
+      if (!finalizedValidation.ok) {
+        const validationMessage =
+          finalizedValidation.error || 'Final integrity validation failed after processing.';
+
+        await supabase
+          .from('knowledge_cards')
+          .update({
+            processing_status: 'failed',
+            summary: validationMessage,
+          })
+          .eq('id', knowledgeCard.id);
+
+        return NextResponse.json({ error: validationMessage }, { status: 500 });
       }
 
       return NextResponse.json({ data: knowledgeCard }, { status: 201 });
